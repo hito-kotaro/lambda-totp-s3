@@ -1,0 +1,77 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  Env:
+    Type: String
+    Default: Dev
+
+Resources:
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: data-transfer-function-execution-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/SecretsManagerReadWrite
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      
+  LambdaLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - python3.9
+      Content: ../build/mfa.zip
+      LayerName: !Sub ${AWS::StackName}-layer
+
+  Lambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code: ../build/lambda_function.zip
+      Role: !GetAtt  LambdaExecutionRole.Arn
+      FunctionName: !Sub lambda-totp-test-function
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Layers:
+        - !Ref LambdaLayer
+      Timeout: 60
+
+  FromBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: data-receive-sample
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: "s3:ObjectCreated:Put"
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: data/
+                  - Name: suffix
+                    Value: .txt
+            Function: !GetAtt Lambda.Arn
+
+  TriggerLambdaPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt Lambda.Arn 
+      Principal: "s3.amazonaws.com"
+      SourceArn: "arn:aws:s3:::data-receive-sample"
+                  
